@@ -16,7 +16,7 @@ To run this application, ensure you have Go installed.
 1. Navigate to the project directory:
 
    ```bash
-   \roadmap-project\tasktracker
+   \golang-project\tasktracker
    ```
 
 2. Run the application:
