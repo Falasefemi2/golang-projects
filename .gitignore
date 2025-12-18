@@ -1,0 +1,13 @@
+# Go
+/bin/
+/pkg/
+*.exe
+*.test
+*.out
+
+# Editor
+.vscode/
+.idea/
+
+# OS
+.DS_Store
