@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -14,6 +15,15 @@ const (
 	DefaultEventLimit = 10
 	DefaultTimeout    = 30 * time.Second
 	GithubRateLimit   = 60
+
+	CmdEvents = "events"
+	CmdStats  = "stats"
+	CmdRepos  = "repos"
+	CmdHelp   = "help"
+
+	SortUpdated = "updated"
+	SortStars   = "stars"
+	SortForks   = "forks"
 )
 
 type Event struct {
@@ -84,158 +94,254 @@ type Repo struct {
 }
 
 type GithubClient struct {
-	BaseUrl string
-	Timeout time.Duration
+	BaseUrl      string
+	httpClient   *http.Client
+	Subcommands []Subcommand
+}
+
+type Subcommand struct {
+	Name      string
+	Run       func(args []string) error
+	Usage     string
+	RequiresAuth bool
+}
+
+func (gc *GithubClient) Run(args []string) error {
+	if len(args) < 1 {
+		printUsage()
+		return nil
+	}
+
+	cmdName := args[0]
+	for _, cmd := range gc.Subcommands {
+		if cmd.Name == cmdName {
+			return cmd.Run(args[1:])
+		}
+	}
+
+	fmt.Println("unknown command:", cmdName)
+	printUsage()
+	return nil
 }
 
 func main() {
-	if len(os.Args) < 2 {
-		printUsage()
-		return
-	}
-
-	command := os.Args[1]
-
-	switch command {
-	case "events":
-		if len(os.Args) < 3 {
-			fmt.Println("Error: username is required")
-			printUsage()
-			return
-		}
-		username := os.Args[2]
-		limit := DefaultEventLimit
-
-		if len(os.Args) > 3 {
-			_, err := fmt.Sscanf(os.Args[3], "%d", &limit)
-			if err != nil || limit < 1 || limit > 300 {
-				fmt.Println("Error: limit must be a number between 1 and 300")
-				return
-			}
-		}
-
-		client := NewGithubClient(DefaultBaseURL, DefaultTimeout)
-		events, err := client.GetEvents(username)
-		if err != nil {
-			handleError(err)
-			return
-		}
-		if len(events) == 0 {
-			fmt.Println("No events found for user:", username)
-			return
-		}
-
-		displayCount := limit
-		if displayCount > len(events) {
-			displayCount = len(events)
-		}
-		fmt.Printf("Showing %d of %d events for user '%s':\n\n", displayCount, len(events), username)
-		for i := 0; i < displayCount; i++ {
-			event := events[i]
-			fmt.Printf("%d. [%s] %s\n", i+1, event.CreatedAt.Format("2006-01-02 15:04"), event.Type)
-			fmt.Printf("   Repository: %s\n", event.Repo.Name)
-			fmt.Printf("   Actor: %s\n\n", event.Actor.Login)
-		}
-
-	case "stats":
-		if len(os.Args) < 3 {
-			fmt.Println("Error: username is required")
-			printUsage()
-			return
-		}
-		username := os.Args[2]
-		client := NewGithubClient(DefaultBaseURL, DefaultTimeout)
-		user, err := client.GetUserInfo(username)
-		if err != nil {
-			handleError(err)
-			return
-		}
-
-		fmt.Printf("\n📊 GitHub Stats for @%s\n", user.Login)
-		fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-
-		if user.Bio != "" {
-			fmt.Printf("Bio: %s\n", user.Bio)
-		}
-
-		yearsOnGithub := time.Since(user.CreatedAt).Hours() / 24 / 365
-		fmt.Printf("Member since: %s (%.1f years)\n", user.CreatedAt.Format("2006-01-02"), yearsOnGithub)
-
-		fmt.Printf("Public Repositories: %d\n", user.PublicRepos)
-		fmt.Printf("Public Gists: %d\n", user.PublicGist)
-		fmt.Printf("Followers: %d\n", user.Followers)
-		fmt.Printf("Following: %d\n", user.Following)
-
-		if user.TwitterUsername != "" {
-			fmt.Printf("Twitter: @%s\n", user.TwitterUsername)
-		}
-
-		fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-	case "repos":
-		if len(os.Args) < 3 {
-			fmt.Println("Error: username is required")
-			fmt.Println("Usage: github-cli repos <username> [sort] [limit]")
-			fmt.Println("Sort options: updated (default), stars, forks")
-			printUsage()
-			return
-		}
-		username := os.Args[2]
-		sort := "updated"
-		limit := 10
-
-		if len(os.Args) > 3 {
-			sort = os.Args[3]
-			if sort != "updated" && sort != "stars" && sort != "forks" {
-				fmt.Println("Error: sort must be 'updated', 'stars', or 'forks'")
-				return
-			}
-		}
-		if len(os.Args) > 4 {
-			_, err := fmt.Sscanf(os.Args[4], "%d", &limit)
-			if err != nil || limit < 1 || limit > 100 {
-				fmt.Println("Error: limit must be a number between 1 and 100")
-				return
-			}
-		}
-		client := NewGithubClient(DefaultBaseURL, DefaultTimeout)
-		repos, err := client.GetRepoStat(username, sort, limit)
-		if err != nil {
-			handleError(err)
-			return
-		}
-		fmt.Printf("\n📚 Top %d Repositories for @%s (sorted by %s)\n", len(repos), username, sort)
-		fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-
-		for i, repo := range repos {
-			fmt.Printf("\n%d. %s\n", i+1, repo.Name)
-
-			if repo.Description != "" {
-				fmt.Printf("   Description: %s\n", repo.Description)
-			}
-
-			if repo.Language != "" {
-				fmt.Printf("   Language: %s\n", repo.Language)
-			}
-
-			fmt.Printf("   ⭐ Stars: %d  🍴 Forks: %d\n", repo.StargazersCount, repo.ForksCount)
-			fmt.Printf("   Last updated: %s\n", repo.UpdatedAt.Format("2006-01-02"))
-			fmt.Printf("   Link: %s\n", repo.HtmlURL)
-		}
-
-		fmt.Println("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-	case "help":
-		printUsage()
-	default:
-		fmt.Println("unknown command:", command)
-		printUsage()
+	client := NewGithubClient(DefaultBaseURL, DefaultTimeout)
+	if err := client.Run(os.Args[1:]); err != nil {
+		handleError(err)
+		os.Exit(1)
 	}
 }
 
 func NewGithubClient(baseURL string, timeout time.Duration) *GithubClient {
-	return &GithubClient{
+	client := &GithubClient{
 		BaseUrl: baseURL,
-		Timeout: timeout,
+		httpClient: &http.Client{
+			Timeout: timeout,
+		},
 	}
+	client.Subcommands = []Subcommand{
+		{
+			Name:      CmdEvents,
+			Run:       client.eventsCmd,
+			Usage:     "events <username> [limit]",
+			RequiresAuth: false,
+		},
+		{
+			Name:      CmdStats,
+			Run:       client.statsCmd,
+			Usage:     "stats <username>",
+			RequiresAuth: false,
+		},
+		{
+			Name:      CmdRepos,
+			Run:       client.reposCmd,
+			Usage:     "repos <username> [sort] [limit]",
+			RequiresAuth: false,
+		},
+		{
+			Name:      CmdHelp,
+			Run:       helpCmd,
+			Usage:     "help",
+			RequiresAuth: false,
+		},
+	}
+	return client
+}
+
+func (gc *GithubClient) eventsCmd(args []string) error {
+	if len(args) < 1 {
+		return errors.New("username is required")
+	}
+	username := args[0]
+	limit := DefaultEventLimit
+
+	if len(args) > 1 {
+		_, err := fmt.Sscanf(args[1], "%d", &limit)
+		if err != nil || limit < 1 || limit > 300 {
+			return errors.New("limit must be a number between 1 and 300")
+		}
+	}
+
+	events, err := gc.GetEvents(username)
+	if err != nil {
+		return err
+	}
+	if len(events) == 0 {
+		fmt.Println("No events found for user:", username)
+		return nil
+	}
+
+	displayCount := limit
+	if displayCount > len(events) {
+		displayCount = len(events)
+	}
+	fmt.Printf("Showing %d of %d events for user '%s':\n\n", displayCount, len(events), username)
+	for i := 0; i < displayCount; i++ {
+		event := events[i]
+		fmt.Printf("%d. [%s] %s\n", i+1, event.CreatedAt.Format("2006-01-02 15:04"), event.Type)
+		fmt.Printf("   Repository: %s\n", event.Repo.Name)
+		fmt.Printf("   Actor: %s\n\n", event.Actor.Login)
+	}
+	return nil
+}
+
+func (gc *GithubClient) statsCmd(args []string) error {
+	if len(args) < 1 {
+		return errors.New("username is required")
+	}
+	username := args[0]
+
+	var user User
+	var repos []Repo
+	var wg sync.WaitGroup
+	errChan := make(chan error, 2)
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		u, err := gc.GetUserInfo(username)
+		if err != nil {
+			errChan <- err
+			return
+		}
+		user = *u
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		r, err := gc.GetRepoStat(username, SortUpdated, 10)
+		if err != nil {
+			errChan <- err
+			return
+		}
+		repos = r
+	}()
+
+	wg.Wait()
+	close(errChan)
+
+	for err := range errChan {
+		if err != nil {
+			return err
+		}
+	}
+
+	fmt.Printf("\n📊 GitHub Stats for @%s\n", user.Login)
+	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+	if user.Bio != "" {
+		fmt.Printf("Bio: %s\n", user.Bio)
+	}
+
+	yearsOnGithub := time.Since(user.CreatedAt).Hours() / 24 / 365
+	fmt.Printf("Member since: %s (%.1f years)\n", user.CreatedAt.Format("2006-01-02"), yearsOnGithub)
+
+	fmt.Printf("Public Repositories: %d\n", user.PublicRepos)
+	fmt.Printf("Public Gists: %d\n", user.PublicGist)
+	fmt.Printf("Followers: %d\n", user.Followers)
+	fmt.Printf("Following: %d\n", user.Following)
+
+	if user.TwitterUsername != "" {
+		fmt.Printf("Twitter: @%s\n", user.TwitterUsername)
+	}
+
+	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+
+	fmt.Printf("\n📚 Top 10 Repositories for @%s (sorted by updated)\n", username)
+	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+	for i, repo := range repos {
+		fmt.Printf("\n%d. %s\n", i+1, repo.Name)
+
+		if repo.Description != "" {
+			fmt.Printf("   Description: %s\n", repo.Description)
+		}
+
+		if repo.Language != "" {
+			fmt.Printf("   Language: %s\n", repo.Language)
+		}
+
+		fmt.Printf("   ⭐ Stars: %d  🍴 Forks: %d\n", repo.StargazersCount, repo.ForksCount)
+		fmt.Printf("   Last updated: %s\n", repo.UpdatedAt.Format("2006-01-02"))
+		fmt.Printf("   Link: %s\n", repo.HtmlURL)
+	}
+
+	fmt.Println("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+
+	return nil
+}
+
+func (gc *GithubClient) reposCmd(args []string) error {
+	if len(args) < 1 {
+		return errors.New("username is required")
+	}
+	username := args[0]
+	sort := "updated"
+	limit := 10
+
+	if len(args) > 1 {
+		sort = args[1]
+		if sort != SortUpdated && sort != SortStars && sort != SortForks {
+			return errors.New("sort must be 'updated', 'stars', or 'forks'")
+		}
+	}
+	if len(args) > 2 {
+		_, err := fmt.Sscanf(args[2], "%d", &limit)
+		if err != nil || limit < 1 || limit > 100 {
+			return errors.New("limit must be a number between 1 and 100")
+		}
+	}
+	repos, err := gc.GetRepoStat(username, sort, limit)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("\n📚 Top %d Repositories for @%s (sorted by %s)\n", len(repos), username, sort)
+	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+	for i, repo := range repos {
+		fmt.Printf("\n%d. %s\n", i+1, repo.Name)
+
+		if repo.Description != "" {
+			fmt.Printf("   Description: %s\n", repo.Description)
+		}
+
+		if repo.Language != "" {
+			fmt.Printf("   Language: %s\n", repo.Language)
+		}
+
+		fmt.Printf("   ⭐ Stars: %d  🍴 Forks: %d\n", repo.StargazersCount, repo.ForksCount)
+		fmt.Printf("   Last updated: %s\n", repo.UpdatedAt.Format("2006-01-02"))
+		fmt.Printf("   Link: %s\n", repo.HtmlURL)
+	}
+
+	fmt.Println("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+	return nil
+}
+
+func helpCmd(args []string) error {
+	printUsage()
+	return nil
 }
 
 func printUsage() {
@@ -248,11 +354,15 @@ Usage:
 
 Commands:
   events <username> [limit]    Show recent public events for a user
+  stats <username>             Show summary of user stats
+  repos <username> [sort] [limit] Show user repositories
   help                         Show this help message
 
 Examples:
   github-cli events torvalds
   github-cli events torvalds 5
+  github-cli stats torvalds
+  github-cli repos torvalds stars
   github-cli help
 
 Notes:
@@ -262,37 +372,42 @@ Notes:
 `)
 }
 
+func (gc *GithubClient) doRequest(url string, result interface{}) error {
+	resp, err := gc.httpClient.Get(url)
+	if err != nil {
+		return fmt.Errorf("failed to connect to GitHub API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+	// Continue
+	case http.StatusNotFound:
+		return fmt.Errorf("user not found on GitHub")
+	case http.StatusForbidden:
+		return errors.New("rate limit exceeded. GitHub allows 60 unauthenticated requests per hour. Use a personal access token for higher limits")
+	case http.StatusUnauthorized:
+		return errors.New("authentication failed. Please check your credentials")
+	case http.StatusInternalServerError, http.StatusServiceUnavailable:
+		return errors.New("GitHub API is temporarily unavailable. Please try again later")
+	default:
+		return fmt.Errorf("GitHub API error (HTTP %d): %s", resp.StatusCode, resp.Status)
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
+		return fmt.Errorf("failed to parse API response: %w", err)
+	}
+	return nil
+}
+
 func (gc *GithubClient) GetEvents(username string) ([]Event, error) {
 	if username == "" {
 		return nil, errors.New("username cannot be empty")
 	}
 	url := fmt.Sprintf("%s/users/%s/events", gc.BaseUrl, username)
-	client := &http.Client{
-		Timeout: gc.Timeout,
-	}
-	resp, err := client.Get(url)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to GitHub API: %w", err)
-	}
-	defer resp.Body.Close()
-	switch resp.StatusCode {
-	case http.StatusOK:
-	case http.StatusNotFound:
-		return nil, fmt.Errorf("user '%s' not found on GitHub", username)
-	case http.StatusForbidden:
-		return nil, errors.New("rate limit exceeded. GitHub allows 60 unauthenticated requests per hour. Use a personal access token for higher limits")
-	case http.StatusUnauthorized:
-		return nil, errors.New("authentication failed. Please check your credentials")
-	case http.StatusInternalServerError, http.StatusServiceUnavailable:
-		return nil, errors.New("GitHub API is temporarily unavailable. Please try again later")
-	default:
-		return nil, fmt.Errorf("GitHub API error (HTTP %d): %s", resp.StatusCode, resp.Status)
-	}
 	var events []Event
-	if err := json.NewDecoder(resp.Body).Decode(&events); err != nil {
-		return nil, fmt.Errorf("failed to parse API response: %w", err)
-	}
-	return events, nil
+	err := gc.doRequest(url, &events)
+	return events, err
 }
 
 func (gc *GithubClient) GetUserInfo(username string) (*User, error) {
@@ -300,65 +415,19 @@ func (gc *GithubClient) GetUserInfo(username string) (*User, error) {
 		return nil, errors.New("username cannot be empty")
 	}
 	url := fmt.Sprintf("%s/users/%s", gc.BaseUrl, username)
-	client := &http.Client{
-		Timeout: gc.Timeout,
-	}
-	resp, err := client.Get(url)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to Github SPI: %w", err)
-	}
-	defer resp.Body.Close()
-	switch resp.StatusCode {
-	case http.StatusOK:
-	case http.StatusNotFound:
-		return nil, fmt.Errorf("user '%s' not found on GitHub", username)
-	case http.StatusForbidden:
-		return nil, errors.New("rate limit exceeded. GitHub allows 60 unauthenticated requests per hour. Use a personal access token for higher limits")
-	case http.StatusUnauthorized:
-		return nil, errors.New("authentication failed. Please check your credentials")
-	case http.StatusInternalServerError, http.StatusServiceUnavailable:
-		return nil, errors.New("GitHub API is temporarily unavailable. Please try again later")
-	default:
-		return nil, fmt.Errorf("GitHub API error (HTTP %d): %s", resp.StatusCode, resp.Status)
-	}
-	var users User
-	if err := json.NewDecoder(resp.Body).Decode(&users); err != nil {
-		return nil, fmt.Errorf("failed to parse API response: %w", err)
-	}
-	return &users, nil
+	var user User
+	err := gc.doRequest(url, &user)
+	return &user, err
 }
 
 func (gc *GithubClient) GetRepoStat(username string, sort string, pageNum int) ([]Repo, error) {
 	if username == "" || sort == "" {
-		return nil, errors.New("username cannot be empty | sort cannot be empty")
+		return nil, errors.New("username and sort cannot be empty")
 	}
 	url := fmt.Sprintf("%s/users/%s/repos?sort=%s&per_page=%d", gc.BaseUrl, username, sort, pageNum)
-	client := &http.Client{
-		Timeout: gc.Timeout,
-	}
-	resp, err := client.Get(url)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to Github API: %w", err)
-	}
-	defer resp.Body.Close()
-	switch resp.StatusCode {
-	case http.StatusOK:
-	case http.StatusNotFound:
-		return nil, fmt.Errorf("user '%s' not found on GitHub", username)
-	case http.StatusForbidden:
-		return nil, errors.New("rate limit exceeded. GitHub allows 60 unauthenticated requests per hour. Use a personal access token for higher limits")
-	case http.StatusUnauthorized:
-		return nil, errors.New("authentication failed. Please check your credentials")
-	case http.StatusInternalServerError, http.StatusServiceUnavailable:
-		return nil, errors.New("GitHub API is temporarily unavailable. Please try again later")
-	default:
-		return nil, fmt.Errorf("GitHub API error (HTTP %d): %s", resp.StatusCode, resp.Status)
-	}
 	var repos []Repo
-	if err := json.NewDecoder(resp.Body).Decode(&repos); err != nil {
-		return nil, fmt.Errorf("failed to parse API response: %w", err)
-	}
-	return repos, nil
+	err := gc.doRequest(url, &repos)
+	return repos, err
 }
 
 func handleError(err error) {
@@ -368,3 +437,4 @@ func handleError(err error) {
 		fmt.Println("Then set it as an environment variable: export GITHUB_TOKEN=your_token")
 	}
 }
+
