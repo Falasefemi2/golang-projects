@@ -34,6 +34,21 @@ type Event struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type User struct {
+	Login           string    `json:"login"`
+	ID              int       `json:"id"`
+	URL             string    `json:"url"`
+	Hireable        bool      `json:"hireable"`
+	Bio             string    `json:"bio"`
+	TwitterUsername string    `json:"twitter_username"`
+	PublicRepos     int       `json:"public_repos"`
+	PublicGist      int       `json:"public_gist"`
+	Followers       int       `json:"followers"`
+	Following       int       `json:"following"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
 type GithubClient struct {
 	BaseUrl string
 	Timeout time.Duration
@@ -87,6 +102,41 @@ func main() {
 			fmt.Printf("   Repository: %s\n", event.Repo.Name)
 			fmt.Printf("   Actor: %s\n\n", event.Actor.Login)
 		}
+
+	case "stats":
+		if len(os.Args) < 3 {
+			fmt.Println("Error: username is required")
+			printUsage()
+			return
+		}
+		username := os.Args[2]
+		client := NewGithubClient(DefaultBaseURL, DefaultTimeout)
+		user, err := client.GetUserInfo(username)
+		if err != nil {
+			handleError(err)
+			return
+		}
+
+		fmt.Printf("\n📊 GitHub Stats for @%s\n", user.Login)
+		fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+		if user.Bio != "" {
+			fmt.Printf("Bio: %s\n", user.Bio)
+		}
+
+		yearsOnGithub := time.Since(user.CreatedAt).Hours() / 24 / 365
+		fmt.Printf("Member since: %s (%.1f years)\n", user.CreatedAt.Format("2006-01-02"), yearsOnGithub)
+
+		fmt.Printf("Public Repositories: %d\n", user.PublicRepos)
+		fmt.Printf("Public Gists: %d\n", user.PublicGist)
+		fmt.Printf("Followers: %d\n", user.Followers)
+		fmt.Printf("Following: %d\n", user.Following)
+
+		if user.TwitterUsername != "" {
+			fmt.Printf("Twitter: @%s\n", user.TwitterUsername)
+		}
+
+		fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
 	case "help":
 		printUsage()
 	default:
@@ -157,6 +207,39 @@ func (gc *GithubClient) GetEvents(username string) ([]Event, error) {
 		return nil, fmt.Errorf("failed to parse API response: %w", err)
 	}
 	return events, nil
+}
+
+func (gc *GithubClient) GetUserInfo(username string) (*User, error) {
+	if username == "" {
+		return nil, errors.New("username cannot be empty")
+	}
+	url := fmt.Sprintf("%s/users/%s", gc.BaseUrl, username)
+	client := &http.Client{
+		Timeout: gc.Timeout,
+	}
+	resp, err := client.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to Github SPI: %w", err)
+	}
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusOK:
+	case http.StatusNotFound:
+		return nil, fmt.Errorf("user '%s' not found on GitHub", username)
+	case http.StatusForbidden:
+		return nil, errors.New("rate limit exceeded. GitHub allows 60 unauthenticated requests per hour. Use a personal access token for higher limits")
+	case http.StatusUnauthorized:
+		return nil, errors.New("authentication failed. Please check your credentials")
+	case http.StatusInternalServerError, http.StatusServiceUnavailable:
+		return nil, errors.New("GitHub API is temporarily unavailable. Please try again later")
+	default:
+		return nil, fmt.Errorf("GitHub API error (HTTP %d): %s", resp.StatusCode, resp.Status)
+	}
+	var users User
+	if err := json.NewDecoder(resp.Body).Decode(&users); err != nil {
+		return nil, fmt.Errorf("failed to parse API response: %w", err)
+	}
+	return &users, nil
 }
 
 func handleError(err error) {
