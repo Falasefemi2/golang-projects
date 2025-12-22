@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/falasefemi2/ask-tracker-api/auth"
 	"github.com/falasefemi2/ask-tracker-api/db"
 )
 
@@ -55,10 +56,17 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid email or password", http.StatusUnauthorized)
 		return
 	}
+
+	token, err := auth.GenerateJWT(user.Email)
+	if err != nil {
+		http.Error(w, "Failed to generate token", http.StatusInternalServerError)
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
-		"id":      user.ID,
-		"email":   user.Email,
-		"message": "Login successful",
+		"id":    user.ID,
+		"email": user.Email,
+		"token": token,
 	})
 }
