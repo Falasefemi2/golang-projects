@@ -95,3 +95,62 @@ func UpdateTaskHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(task)
 }
+
+func DeleteTaskHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	parts := strings.Split(r.URL.Path, "/")
+	if len(parts) < 3 {
+		http.Error(w, "Invalid task ID", http.StatusBadRequest)
+		return
+	}
+	taskID, err := strconv.Atoi(parts[2])
+	if err != nil {
+		http.Error(w, "Task ID must be a number", http.StatusBadRequest)
+		return
+	}
+	claims, ok := r.Context().Value("user").(*auth.Claims)
+	if !ok {
+		http.Error(w, "Could not retrieve user from context", http.StatusInternalServerError)
+		return
+	}
+	user, err := db.GetUserByEmail(claims.Email)
+	if err != nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+	err = db.DeleteTask(taskID, user.ID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"message": "task deleted successfully"})
+}
+
+func GetUserTasksHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	claims, ok := r.Context().Value("user").(*auth.Claims)
+	if !ok {
+		http.Error(w, "Could not retrieve user from context", http.StatusInternalServerError)
+		return
+	}
+	user, err := db.GetUserByEmail(claims.Email)
+	if err != nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+	tasks, err := db.GetUserTasks(user.ID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(tasks)
+}
