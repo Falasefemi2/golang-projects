@@ -14,7 +14,21 @@ func main() {
 
 	http.HandleFunc("/signup", handler.SignUp)
 	http.HandleFunc("/login", handler.Login)
-	http.HandleFunc("/admin/users", middleware.RoleAuth(handler.GetAllUsers, db.Admin))
+
+	http.HandleFunc(
+		"/admin/users",
+		middleware.RoleAuth(handler.GetAllUsers, db.Admin),
+	)
+
+	http.HandleFunc(
+		"/semesters",
+		middleware.RoleAuth(handler.SemestersHandler, db.Admin, db.Lecturer, db.Student),
+	)
+
+	http.HandleFunc(
+		"/semesters/",
+		middleware.RoleAuth(handler.SemesterByIDHandler, db.Admin),
+	)
 
 	http.ListenAndServe(":8080", nil)
 }

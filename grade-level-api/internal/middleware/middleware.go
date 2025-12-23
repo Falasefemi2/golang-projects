@@ -9,7 +9,7 @@ import (
 	"github.com/falasefemi2/gradesystem/utils"
 )
 
-func RoleAuth(next http.HandlerFunc, requiredRole db.Role) http.HandlerFunc {
+func RoleAuth(next http.HandlerFunc, allowedRoles ...db.Role) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
@@ -17,14 +17,13 @@ func RoleAuth(next http.HandlerFunc, requiredRole db.Role) http.HandlerFunc {
 			return
 		}
 
-		headerParts := strings.Split(authHeader, " ")
-		if len(headerParts) != 2 || strings.ToLower(headerParts[0]) != "bearer" {
+		parts := strings.Split(authHeader, " ")
+		if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
 			utils.WriteError(w, http.StatusUnauthorized, "invalid authorization header")
 			return
 		}
-		tokenString := headerParts[1]
 
-		claims, err := ValidateJWT(tokenString)
+		claims, err := ValidateJWT(parts[1])
 		if err != nil {
 			utils.WriteError(w, http.StatusUnauthorized, "invalid token")
 			return
@@ -36,12 +35,20 @@ func RoleAuth(next http.HandlerFunc, requiredRole db.Role) http.HandlerFunc {
 			return
 		}
 
-		if db.Role(user.Role) != requiredRole {
+		authorized := false
+		for _, role := range allowedRoles {
+			if db.Role(user.Role) == role {
+				authorized = true
+				break
+			}
+		}
+
+		if !authorized {
 			utils.WriteError(w, http.StatusForbidden, "forbidden")
 			return
 		}
 
-		ctx := context.WithValue(r.Context(), "user", user)
+		ctx := context.WithValue(r.Context(), userContextKey, user)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	}
 }
