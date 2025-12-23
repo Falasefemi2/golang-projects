@@ -42,7 +42,7 @@ func CreateSemester(name Semester, startDate, endDate time.Time) (*models.Semest
 	}, nil
 }
 
-func GetAllSemesters() ([]models.Semester, error) {
+func ListSemesters() ([]models.Semester, error) {
 	rows, err := DB.Query(
 		`SELECT id, name, start_date, end_date FROM semester ORDER BY start_date`,
 	)
@@ -61,10 +61,15 @@ func GetAllSemesters() ([]models.Semester, error) {
 		semesters = append(semesters, s)
 	}
 
+	// IMPORTANT: catch iteration errors
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
 	return semesters, nil
 }
 
-func GetSemesterByID(id int) (*models.Semester, error) {
+func FindSemesterByID(id int) (*models.Semester, error) {
 	var s models.Semester
 
 	err := DB.QueryRow(

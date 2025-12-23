@@ -65,11 +65,13 @@ func GetAllSemesters(w http.ResponseWriter, r *http.Request) {
 		utils.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	semesters, err := db.GetAllSemesters()
+
+	semesters, err := db.ListSemesters()
 	if err != nil {
-		utils.WriteError(w, http.StatusInternalServerError, "failed to retrieve semesters")
+		utils.WriteError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+
 	utils.WriteJSON(w, http.StatusOK, semesters)
 }
 
@@ -78,16 +80,25 @@ func GetSemesterByID(w http.ResponseWriter, r *http.Request) {
 		utils.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	semesterID, err := strconv.Atoi(r.URL.Query().Get("id"))
+
+	idStr := r.URL.Query().Get("id")
+	if idStr == "" {
+		utils.WriteError(w, http.StatusBadRequest, "missing semester id")
+		return
+	}
+
+	semesterID, err := strconv.Atoi(idStr)
 	if err != nil || semesterID <= 0 {
 		utils.WriteError(w, http.StatusBadRequest, "invalid semester id")
 		return
 	}
-	semester, err := db.GetSemesterByID(semesterID)
+
+	semester, err := db.FindSemesterByID(semesterID)
 	if err != nil {
 		utils.WriteError(w, http.StatusNotFound, err.Error())
 		return
 	}
+
 	utils.WriteJSON(w, http.StatusOK, semester)
 }
 

@@ -30,5 +30,10 @@ func main() {
 		middleware.RoleAuth(handler.SemesterByIDHandler, db.Admin),
 	)
 
+	http.HandleFunc(
+		"/courses",
+		middleware.RoleAuth(handler.CreateCourse, db.Lecturer),
+	)
+
 	http.ListenAndServe(":8080", nil)
 }
