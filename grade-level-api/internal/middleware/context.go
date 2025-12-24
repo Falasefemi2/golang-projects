@@ -1,19 +1,17 @@
+// middleware/context.go
 package middleware
 
 import (
 	"context"
+	"errors"
 
 	"github.com/falasefemi2/gradesystem/internal/models"
 )
 
-type contextKey string
-
-const userContextKey contextKey = "user"
-
-func GetUserFromContext(ctx context.Context) *models.User {
-	user, ok := ctx.Value(userContextKey).(*models.User)
+func GetUserFromContext(ctx context.Context) (*models.User, error) {
+	user, ok := ctx.Value("user").(*models.User)
 	if !ok {
-		return nil
+		return nil, errors.New("user not found in context")
 	}
-	return user
+	return user, nil
 }

@@ -48,7 +48,7 @@ func RoleAuth(next http.HandlerFunc, allowedRoles ...db.Role) http.HandlerFunc {
 			return
 		}
 
-		ctx := context.WithValue(r.Context(), userContextKey, user)
+		ctx := context.WithValue(r.Context(), "user", user)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	}
 }
